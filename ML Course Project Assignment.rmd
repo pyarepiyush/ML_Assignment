@@ -1,0 +1,148 @@
+---
+title: "Machine Learning Course Project"
+output: html_document
+---
+
+
+### SYNOPSIS
+The objective of this project is to recognize the quality of exercises performed using wearable devices such as Fitbit, Nike Fuel, etc. The subjects were asked to performed Dubbell Biceps Curl in various different ways. Then, the sensors measured the orientation based on the movement performed. 
+
+Here is the description of the meaning of the response values from the original paper: "...exactly according to the specication (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). Class A corresponds to the specied execution of the exercise, while the other 4 classes correspond to common mistakes."
+
+
+
+
+
+### READ DATA AND CLEANUP
+First we read the csv files from the URL provided in the assignment page.
+
+```{r}
+library(caret)
+library(RCurl)
+set.seed(1111)
+
+train <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",stringsAsFactors=FALSE, na.strings=c("NA","","#DIV/0!"))
+test <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",stringsAsFactors=FALSE, na.strings=c("NA","","#DIV/0!"))
+```
+
+Next we remove variables from training dataset are do not contribute to the final model:
+  1) Character variables such as 'user_name' and date variables.
+  2) Variables that have near-zero variance (using nearZeroVar()) or more than 90% values missing.
+
+Remove the exact same variables from the testing dataset as well.
+
+```{r, echo=FALSE}
+# Remove username, data variables & near-zer variance variables
+  # Clean Training dataset
+  train.clean = train[,-c(1,2,3,4,5)]
+  x = nearZeroVar(train.clean, saveMetrics = TRUE)
+  dropzerovars = which(x$nzv==TRUE)
+  train.clean = train.clean[,-dropzerovars]
+
+  # Check how many missing values in each variable
+  navars = data.frame(apply(train.clean,2, function(x) sum(is.na(x))/length(x) ) )
+  dropnavars = which(navars[,1]>=.90)
+  train.clean = train.clean[,-dropnavars]
+
+  
+  #clean testing dataset
+  test.clean = test[,-c(1,2,3,4,5)]
+  test.clean = test.clean[,-dropzerovars]
+  test.clean = test.clean[,-dropnavars]
+
+```
+
+
+
+### TRAINING AND TESTING
+
+Once the missing and near-zero variance data is removed, we split the original training dataset into train (3/4) and test (1/4) splits. The training part will be used to fit the model and the testing part will validate our fit.
+
+
+```{r}
+  # split the train data into testing and training for prediction
+  testindex = sample(1:dim(train)[1], dim(train)[1]/4)
+
+  train.ds = train.clean[-testindex,]
+  test.ds  = train.clean[testindex,]
+```
+
+
+
+### MACHINE LEARNING ALGORITHM
+
+#### Classification Tree
+
+For the machine learning algorithm, we start with classification tree as our baseline. Classificaiton tree is used to predict a categorical response. A predictor is chosen based on its importance, and split into two parts that describe the response. Then based on yes/no answer, we either go left node or right node. At each node, another predictor is chosen, and the same process is repeated. It continues until we reach the leaf, at which point, the final decision is made for that leaf.
+
+We use the package rpart to build our classification tree:
+
+```{r}
+fit.rp <- train(factor(classe) ~ ., method="rpart", data = train.ds,
+                trControl = trainControl(method = "cv", number = 10, allowParallel = TRUE)
+                )
+cm.rp = confusionMatrix(predict(fit.rp, test.ds), test.ds$classe)
+cm.rp
+```
+
+
+Out of sample error is also very high.
+```{r}
+# Out of Sample Error
+OutofsampleError = 1- cm.rp$overall[1]
+names(OutofsampleError ) = "OutofsampleError"
+OutofsampleError
+
+```
+
+Here, we apply a 10-fold cross validation to the dataset.
+
+The confusion matrix shows an accuracy of 0.4922, which is pretty low. We can either decide to improve the tree by pruning its branches or by adjusting its parameters. But we decide to move on to another ML algorithm, Random Forest.
+
+
+
+#### Random Forest
+
+Random Forest uses similar technique as classifination/decision trees. However, they use an ensemble learning method. It takes small random subsets of the variables and creates trees for each of those subsets. Then it combines all the 'weak learners', to end up with a strong learner.
+
+The model below created 500 trees and randomly picked 7 variables for each split
+```{r}
+library(randomForest)
+rf.fit <- randomForest(factor(classe)~., data=train.ds,proximity=T )
+
+rf.pred = predict(rf.fit,test.ds)
+rf.cm = confusionMatrix(rf.pred, test.ds$classe)
+rf.cm
+```
+
+Out of sample error is very low.
+```{r}
+# Out of Sample Error
+OutofsampleError = 1- rf.cm$overall[1]
+names(OutofsampleError ) = "OutofsampleError"
+OutofsampleError
+```
+
+
+Using the variable importance feature of `randomForest()` function, we look at few plots that shows the relationship between the predictors and the response. These plots shows the relationships between variables that Random Forest determined to have high importance. The colors correspond to the response values. Here, we see that for different ranges of num_window variable, the reponse variables (A-E) are nicely clustered. The Random Forest identifies these relationships and creates an ensemble model.
+
+
+
+```{r, echo=FALSE}
+qplot(num_window, magnet_dumbbell_z, col=classe, data=train.ds)
+
+
+qplot( num_window,pitch_arm, col=classe, data=train.ds)
+```
+
+
+### MODEL PERFORMANCE
+
+The confusion matrix shows an accuracy of .99, which is very high (considering the low accuracy in the classification tree). The sesitivity and specificity rates are also very high. This shows that Random Forest combines all the weak learners and extracts a strong ensemble model. 
+
+Also, the additional test dataset provided for the Course project Submission are also correctely predicted by the RF model (according to the feedback!). 
+
+```{r}
+predict(rf.fit,test.clean)
+```
+
